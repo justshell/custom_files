@@ -1,0 +1,17 @@
+- name: collect info about destinations for urls with checksums
+  ansible.builtin.stat:
+    path: "{{ files[dict_item].dest }}"
+    checksum_algorithm: "{{ files[dict_item].checksum_algorithm }}"
+  register: "checksummed_host"
+
+- name: setup files from urls with checksums verify
+  get_url:
+    url: "{{ files[dict_item].src }}"
+    dest: "{{ files[dict_item].dest }}"
+    owner: "{{ files[dict_item].owner | default('root') }}"
+    group: "{{ files[dict_item].group | default(files[dict_item].owner | default('root')) }}"
+    mode: "{{ files[dict_item].mode | default('0644') }}"
+    checksum: "{{ files[dict_item].checksum_algorithm }}:{{ files[dict_item].checksum }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+  when:
+    - checksummed_host.stat.exists==False or checksummed_host.stat.checksum is undefined or checksummed_host.stat.checksum!=files[dict_item].checksum
