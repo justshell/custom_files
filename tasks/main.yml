@@ -1,0 +1,106 @@
+- name: collect vars
+  set_fact:
+    dirs: "{{ custom_files.dirs | default({}) }}"
+    files: "{{ custom_files.files | default({}) }}"
+    symlinks: "{{ custom_files.symlinks | default({}) }}"
+    templated_files: []
+    urled_files: []
+    urled_files_with_checksum: []
+  tags:
+    - always
+
+- name: manage dirs
+  file:
+    path: "{{ dir.value.path }}"
+    state: "directory"
+    owner: "{{ dir.value.owner | default('root') }}"
+    group: "{{ dir.value.group | default(dir.value.owner | default('root')) }}"
+    mode: "{{ dir.value.mode | default('0755') }}"
+  loop: "{{ lookup('dict',dirs,wantlist=True,errors='ignore') }}"
+  loop_control:
+    loop_var: "dir"
+  tags:
+    - custom_dirs
+
+- name: delete managed files
+  file:
+    path: "{{ file.value.dest }}"
+    state: "absent"
+  when:
+    - file.value.state is defined
+    - file.value.state == 'absent'
+  loop: "{{ lookup('dict',files,wantlist=True,errors='ignore') }}"
+  loop_control:
+    loop_var: "file"
+
+- name: manage files (touching)
+  file:
+    access_time: 'preserve'
+    modification_time: 'preserve'
+    path: "{{ file.value.dest }}"
+    state: "touch"
+    owner: "{{ file.value.owner | default('root') }}"
+    group: "{{ file.value.group | default(file.value.owner|default('root')) }}"
+    mode: "{{ file.value.mode | default('0644') }}"
+  when:
+    - file.value.state is defined
+    - file.value.state == 'touch'
+  loop: "{{ lookup('dict',files,wantlist=True,errors='ignore') }}"
+  loop_control:
+    loop_var: "file"
+
+- name: collect info for templated files
+  set_fact:
+    templated_files: "{{ templated_files + [ file.key ] }}"
+  when:
+    - file.value.state is undefined or file.value.state == 'file'
+    - not file.value.src is url
+  loop: "{{ lookup('dict',files,wantlist=True,errors='ignore') }}"
+  loop_control:
+    loop_var: "file"
+
+- name: collect info for urled files
+  set_fact:
+    urled_files: "{{ urled_files + ([ file.key ] if file.value.checksum is undefined else []) }}"
+    urled_files_with_checksum: "{{ urled_files_with_checksum + ([ file.key ] if file.value.checksum is defined else []) }}"
+  when:
+    - file.value.state is undefined or file.value.state == 'file'
+    - file.value.src is url
+  loop: "{{ lookup('dict',files,wantlist=True,errors='ignore') }}"
+  loop_control:
+    loop_var: "file"
+
+- name: manage files (templated)
+  template:
+    src: "{{custom_files.internal.template_path}}/{{ files[item].src }}"
+    dest: "{{ files[item].dest }}"
+    owner: "{{ files[item].owner | default('root') }}"
+    group: "{{ files[item].group | default(files[item].owner | default('root')) }}"
+    mode: "{{ files[item].mode | default('0644') }}"
+  loop: "{{ templated_files }}"
+
+- name: manage files (urls w\o checksums)
+  get_url:
+    url: "{{ files[item].src }}"
+    dest: "{{ files[item].dest }}"
+    owner: "{{ files[item].owner | default('root') }}"
+    group: "{{ files[item].group | default(files[item].owner | default('root')) }}"
+    mode: "{{ files[item].mode | default('0644') }}"
+  loop: "{{ urled_files }}"
+
+- name: manage files (urls with checksums) (apply only if checksums different)
+  include_tasks: "urled_files_with_checksums.yml"
+  loop: "{{ urled_files_with_checksum }}"
+  loop_control:
+    loop_var: "dict_item"
+
+- name: manage symliks
+  file:
+    src: "{{ link.value.src }}"
+    dest: "{{ link.value.dest }}"
+    state: "link"
+    follow: no
+    force: yes
+  loop: "{{ lookup('dict',symlinks,wantlist=True,errors='ignore') }}"
+  loop_control:
+    loop_var: "link"
